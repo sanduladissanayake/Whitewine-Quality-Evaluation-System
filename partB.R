@@ -1,0 +1,165 @@
+# Set a random seed for reproducibility of results 
+set.seed(20) 
+
+# Load the required libraries for neural network and data handling 
+library(neuralnet) 
+library(readxl) 
+
+# Read the Excel file containing the exchange rate data 
+exchange_dataset <- read_excel("ExchangeUSD.xlsx") 
+
+# Extract the USD/EUR exchange rate column and corresponding dates 
+exchange_rate <- exchange_dataset[[3]]   
+exchange_date <- exchange_dataset[[1]] 
+
+# Split the exchange rate data into training (first 400 observations) and testing (remaining observations) sets 
+train_data <- exchange_rate[1:400] 
+test_data <- exchange_rate[401:length(exchange_rate)] 
+
+# Function to create input and output matrices for time series data
+create_io_matrix <- function(data, time_lags) { 
+  n <- length(data) 
+  input <- matrix(NA, nrow = n - time_lags, ncol = time_lags) 
+  output <- data[(time_lags + 1):n] 
+  for (i in 1:ncol(input)) { 
+    input[, i] <- data[1:(n - time_lags)] 
+    data <- data[-1] 
+  } 
+  return(list(input = input, output = output)) 
+}
+
+# Function to create input vectors for time series data 
+create_input_vectors <- function(data, time_lags) { 
+  n <- length(data) 
+  input_vectors <- matrix(NA, nrow = n - time_lags, ncol = time_lags) 
+  for (i in 1:time_lags) { 
+    input_vectors[, i] <- data[i:(n - time_lags + i - 1)] 
+  } 
+  return(input_vectors) 
+} 
+
+# Normalize the training and testing data using Z-score normalization 
+train_normalized_data <- scale(train_data) 
+test_normalized_data <- scale(test_data) 
+
+# Function to train a neural network model 
+train_model <- function(train_input, train_output, hidden_layers) { 
+  train_df <- cbind(train_output, train_input) 
+  model <- neuralnet(train_output ~ ., data = train_df, hidden = hidden_layers, linear.output = 
+                       TRUE, 
+                     thresh = 0.1,  # Adjust the threshold for convergence 
+                     stepmax = 10000,  # Increase the maximum number of iterations for convergence 
+                     learningrate = 0.01,  # Adjust the learning rate for weight updates
+                     lifesign = "full") 
+  return(model) 
+} 
+
+# Function to make predictions using a trained neural network model
+make_predictions <- function(model, test_input, testing_data) { 
+  predictions <- predict(model, as.data.frame(test_input)) 
+  predictions_denorm <- predictions * sd(testing_data) + mean(testing_data) 
+  return(predictions_denorm) 
+}
+
+# Function to evaluate the performance of a model using various metrics 
+evaluate_performance <- function(predictions_denorm, testing_data) { 
+  error <- testing_data[5:length(testing_data)] - predictions_denorm 
+  rmse <- sqrt(mean(error^2)) 
+  mae <- mean(abs(error)) 
+  mape <- mean(abs(error / testing_data[5:length(testing_data)])) * 100 
+  smape <- mean(200 * abs(error) / (abs(testing_data[5:length(testing_data)]) + 
+                                      abs(predictions_denorm))) 
+  return(c(rmse = rmse, mae = mae, mape = mape, smape = smape)) 
+} 
+
+# Define a list of different hidden layer configurations
+fixed_hidden_layers <- c(5, 2) # Fixed configuration with one hidden layer of 5 neurons and another of 2 neurons
+random_hidden_layers <- replicate(12, sample(2:20, 2), simplify = FALSE) # 12 random configurations with 2 hidden layers each
+
+# Initialize lists to store performance metrics and trained models
+all_performance_metrics <- list() 
+all_models <- list() 
+
+# Train models for each hidden layer configuration and evaluate their performance
+for (i in 1:(length(random_hidden_layers) + 1)){  
+  if (i == 1) { 
+    hidden_layers <- fixed_hidden_layers 
+    model_name <- "Model 1" 
+  } else { 
+    hidden_layers <- random_hidden_layers[[i - 1]] 
+    model_name <- paste("Model", i) 
+  }
+
+
+# Train the model 
+train_input <- create_input_vectors(train_normalized_data, 4) 
+train_output <- train_normalized_data[5:length(train_normalized_data)]  # Output starts from the 5th element
+model <- train_model(train_input, train_output, hidden_layers) 
+
+
+all_models[[model_name]] <- model 
+
+# Make predictions 
+test_input <- create_input_vectors(test_normalized_data, 4) 
+predictions_denorm <- make_predictions(model, test_input, testing_data) 
+
+# performance evaluation 
+performance_metrics <- evaluate_performance(predictions_denorm, testing_data) 
+
+
+all_performance_metrics[[model_name]] <- performance_metrics 
+}
+
+# Convert the list of performance metrics into a data frame 
+performance_df <- as.data.frame(do.call(rbind, all_performance_metrics)) 
+colnames(performance_df) <- c("RMSE", "MAE", "MAPE", "sMAPE") 
+
+# Print the comparison table of performance metrics for all models 
+print("Comparison Table:") 
+print(performance_df) 
+
+# Calculate the total number of weight parameters for each network 
+num_input_features <- ncol(training_normalized)  
+
+# For one-hidden layer network 
+num_neurons_hidden1 <- fixed_hidden_layers[1] 
+total_params_one_hidden <- (num_input_features + 1) * num_neurons_hidden1 + 
+  (num_neurons_hidden1 + 1) * 1 
+
+# For two-hidden layer network 
+num_neurons_hidden2 <- fixed_hidden_layers[2] 
+total_params_two_hidden <- (num_input_features + 1) * num_neurons_hidden1 + 
+  (num_neurons_hidden1 + 1) * num_neurons_hidden2 + 
+  (num_neurons_hidden2 + 1) * 1 
+
+# Print the total number of weight parameters for each network 
+cat("Total number of weight parameters for one-hidden layer network:", 
+    total_params_one_hidden, "\n") 
+cat("Total number of weight parameters for two-hidden layer network:", 
+    total_params_two_hidden, "\n")
+
+performance_df$combined_score <- rowSums(performance_df[, c("RMSE", "MAE", "MAPE", "sMAPE")]) 
+
+
+
+#best model based on a performance 
+bestmodel_index <- which.min(performance_df$combined_score) 
+bestmodel_name <- rownames(performance_df)[bestmodel_index]
+bestmodel_performance <- performance_df[bestmodel_index, ] 
+best_model <- all_models[[bestmodel_name]] 
+
+# Print the best model 
+cat("Best_model:", bestmodel_name, "\n")
+cat("Performance of the best model:\n") 
+print(bestmodel_performance) 
+
+
+# Make predictions using the best model 
+test_input <- create_input_vectors(test_normalized_data, 4) 
+best_predictions_denorm <- make_predictions(best_model, test_input, testing_data) 
+
+#predictions vs. actuals plot visualization
+plot(testing_data, type = "l", col = "blue", ylim = c(min(testing_data), max(testing_data)), main = 
+       "Predictions vs. Actuals for Best Model", xlab = "Time/Date", ylab = "Rate") 
+lines(best_predictions_denorm, col = "red") 
+legend("topleft", legend = c("Actual", "Predicted"), col = c("blue", "red"), lty = 1)
